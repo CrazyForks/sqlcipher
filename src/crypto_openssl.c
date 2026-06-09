@@ -139,7 +139,7 @@ static int sqlcipher_openssl_random (void *ctx, void *buffer, int length) {
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_PROVIDER_RAND));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "sqlcipher_openssl_random: left SQLCIPHER_MUTEX_PROVIDER_RAND");
 #endif
-  if(!rc) {
+  if(rc != 1) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_random: RAND_bytes() returned %d", rc);
     sqlcipher_openssl_log_errors();
     return SQLITE_ERROR;
