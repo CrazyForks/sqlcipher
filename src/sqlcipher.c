@@ -191,12 +191,14 @@ typedef struct {
   void *provider_ctx;
 } codec_ctx ;
 
+#ifndef SQLCIPHER_OMIT_MALLOC
 typedef struct private_block private_block;
 struct private_block {
   private_block *next;
   u32 size;
   u32 is_used;
 };
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 
 /* implementation of simple, fast PSRNG function using xoshiro256++ (XOR/shift/rotate)
  * https://prng.di.unimi.it/ under the public domain via https://prng.di.unimi.it/xoshiro256plusplus.c
@@ -313,6 +315,7 @@ static volatile int sqlcipher_log_set = 0;
 static size_t sqlcipher_shield_mask_sz  = 32;
 static u8* sqlcipher_shield_mask = NULL;
 
+#ifndef SQLCIPHER_OMIT_MALLOC
 /* Establish the default size of the private heap. This can be overriden 
  * at compile time by setting -DSQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT=X */
 #ifndef SQLCIPHER_PRIVATE_HEAP_SIZE_DEFAULT
@@ -350,6 +353,7 @@ static volatile u32 private_heap_overflows = 0; /* number of overlow allocations
 #define SQLCIPHER_PRIVATE_HEAP_ALIGNMENT 8
 #define SQLCIPHER_PRIVATE_HEAP_ROUNDUP(x) ((x % SQLCIPHER_PRIVATE_HEAP_ALIGNMENT) ? \
   ((x / SQLCIPHER_PRIVATE_HEAP_ALIGNMENT) + 1) * SQLCIPHER_PRIVATE_HEAP_ALIGNMENT : x)
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 
 static volatile int sqlcipher_init = 0;
 static volatile int sqlcipher_shutdown = 0;
@@ -506,6 +510,7 @@ int sqlcipher_extra_init(const char* arg) {
     }
   }
 
+#ifndef SQLCIPHER_OMIT_MALLOC
   /* initialize the private heap for use in internal SQLCipher memory allocations */
   if(private_heap == NULL) {
     while(private_heap_sz >= SQLCIPHER_PRIVATE_HEAP_SIZE_STEP) {
@@ -529,6 +534,7 @@ int sqlcipher_extra_init(const char* arg) {
     rc = SQLITE_NOMEM; 
     goto error;
   }
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 
   /* check to see if there is a provider registered at this point
      if there no provider registered at this point, register the 
@@ -599,14 +605,18 @@ int sqlcipher_extra_init(const char* arg) {
  
 error:
   /* if an error occurs during initialization, tear down everything that was setup */
+#ifndef SQLCIPHER_OMIT_MALLOC
   if(private_heap) {
     sqlcipher_internal_free(private_heap, private_heap_sz);
     private_heap = NULL;
   }
+#endif /*SQLCIPHER_OMIT_MALLOC*/
+
   if(sqlcipher_shield_mask) {
     sqlcipher_internal_free(sqlcipher_shield_mask, sqlcipher_shield_mask_sz);
     sqlcipher_shield_mask = NULL;
   }
+
   for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
     if(sqlcipher_static_mutex[i]) {
       sqlite3_mutex_free(sqlcipher_static_mutex[i]);
@@ -654,6 +664,7 @@ void sqlcipher_extra_shutdown(void) {
   }
   default_provider = NULL;
 
+#ifndef SQLCIPHER_OMIT_MALLOC
   /* free private heap. If SQLCipher is compiled in test mode, it will deliberately
      not free the heap (leaking it) if the heap is not empty. This will allow tooling
      to detect memory issues like unfreed private heap memory */
@@ -686,6 +697,7 @@ void sqlcipher_extra_shutdown(void) {
         private_heap_sz, private_heap_hwm, private_heap_alloc, private_heap_allocs, private_heap_overflow, private_heap_overflows
     );
   }
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 
   /* free all of sqlcipher's static mutexes */
   for(i = 0; i < SQLCIPHER_MUTEX_COUNT; i++) {
@@ -908,9 +920,13 @@ void sqlcipher_init_memmethods() {
   * memory segment so it can be paged
   */
 static void sqlcipher_internal_free(void *ptr, sqlite_uint64 sz) {
+#ifdef SQLCIPHER_OMIT_MALLOC
+  free(ptr);
+#else
   xoshiro_randomness(ptr, sz);
   sqlcipher_munlock(ptr, sz);
   sqlite3_free(ptr);
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 }
 
 /**
@@ -920,14 +936,22 @@ static void sqlcipher_internal_free(void *ptr, sqlite_uint64 sz) {
   */
 static void* sqlcipher_internal_malloc(sqlite_uint64 sz) {
   void *ptr;
+#ifdef SQLCIPHER_OMIT_MALLOC
+  ptr = malloc(sz);
+#else
   ptr = sqlite3_malloc64(sz);
-  sqlcipher_memset(ptr, 0, sz);
-  sqlcipher_mlock(ptr, sz);
+  if(ptr) sqlcipher_mlock(ptr, sz);
+#endif /*SQLCIPHER_OMIT_MALLOC*/
+  if(ptr) sqlcipher_memset(ptr, 0, sz);
   return ptr;
 }
 
 void *sqlcipher_malloc(sqlite3_uint64 size) {
   void *alloc = NULL;
+#ifdef SQLCIPHER_OMIT_MALLOC
+  alloc = malloc(size);
+  if(alloc) sqlcipher_memset(alloc, 0, size);
+#else
   private_block *block = NULL, *split = NULL;
 
   if(size < 1 || size > SQLITE_MAX_LENGTH) return NULL;
@@ -991,11 +1015,14 @@ void *sqlcipher_malloc(sqlite3_uint64 size) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_MEM", __func__);
-
+#endif /*SQLCIPHER_OMIT_MALLOC*/
   return alloc;
 }
 
 void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
+#ifdef SQLCIPHER_OMIT_MALLOC
+  free(mem);
+#else
   private_block *block = NULL, *prev = NULL;
   void *alloc = NULL;
   u32 block_size = 0;
@@ -1053,7 +1080,7 @@ void sqlcipher_free(void *mem, sqlite3_uint64 sz) {
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: leaving SQLCIPHER_MUTEX_MEM", __func__);
   sqlite3_mutex_leave(sqlcipher_mutex(SQLCIPHER_MUTEX_MEM));
   sqlcipher_log(SQLCIPHER_LOG_TRACE, SQLCIPHER_LOG_MUTEX, "%s: left SQLCIPHER_MUTEX_MEM", __func__);
-
+#endif /*SQLCIPHER_OMIT_MALLOC*/
 }
 
 int sqlcipher_register_provider(sqlcipher_provider *p) {
