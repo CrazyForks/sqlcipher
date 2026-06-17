@@ -2120,6 +2120,13 @@ static int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   
   /* pull the provided password / key material off the current codec context */
   pass_sz = ctx->read_ctx->pass_sz;
+
+  if(pass_sz < 1 || !ctx->read_ctx->pass) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: underived key material is not available. PRAGMA cipher_migrate MUST be run as the first operation after keying", __func__);
+    rc = SQLITE_MISUSE;
+    goto handle_error;
+  }
+
   if(!(pass = sqlcipher_malloc(pass_sz+1))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate key material storage", __func__);
     rc = SQLITE_NOMEM;
@@ -2152,12 +2159,14 @@ static int sqlcipher_codec_ctx_migrate(codec_ctx *ctx) {
   
   /* if we exit the loop normally we failed to determine the version, this is an error */
   sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: unable to determine format version for upgrade: this may indicate custom settings were used ");
+  rc = SQLITE_NOTADB;
   goto handle_error;
 
 migrate:
 
   if(!(temp = sqlite3_mprintf("%s-migrated", db_filename))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to format temp filename", __func__);
+    rc = SQLITE_NOMEM;
     goto handle_error;
   }
 
@@ -2166,6 +2175,7 @@ migrate:
   migrated_db_filename_sz = sqlite3Strlen30(temp)+2;
   if(!(migrated_db_filename = sqlcipher_malloc(migrated_db_filename_sz))) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to allocate migrated db filename", __func__);
+    rc = SQLITE_NOMEM;
     goto handle_error;
   }
 
@@ -2232,10 +2242,12 @@ migrate:
 
   if( !db->autoCommit ){
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: cannot migrate from within a transaction");
+    rc = SQLITE_MISUSE;
     goto handle_error;
   }
   if( db->nVdbeActive>1 ){
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "sqlcipher_codec_ctx_migrate: cannot migrate - SQL statements in progress");
+    rc = SQLITE_MISUSE;
     goto handle_error;
   }
 
@@ -2253,6 +2265,12 @@ migrate:
   }
 
   sqlcipherCodecGetKey(db, db->nDb - 1, (void**)&keyspec, &keyspec_sz);
+  if(keyspec_sz < 1 || !keyspec) {
+    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_CORE, "%s: failed to retrieve keyspec from migrated database", __func__);
+    rc = SQLITE_ERROR;
+    goto handle_error;
+  }
+
   SQLCIPHER_FLAG_UNSET(ctx->flags, CIPHER_FLAG_KEY_USED);
   sqlcipherCodecAttach(db, 0, keyspec, keyspec_sz);
   

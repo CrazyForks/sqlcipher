@@ -1232,6 +1232,25 @@ do_test migrate-current-format-noop {
 db close
 file delete -force test.db 
 
+# migrate should fail after key derivation occurs
+# key database, then force key derivation by touching schema
+# shoudl report SQLITE_MISUSE
+do_test migrate-fail-after-key-derivation {
+  file copy -force $sampleDir/sqlcipher-4.0-testkey.db test.db
+  sqlite_orig db test.db
+
+  execsql {
+    PRAGMA key = 'testkey';
+    PRAGMA cipher_integrity_check;
+  }
+  
+  execsql { 
+    PRAGMA cipher_migrate;
+  }
+} {21}
+db close
+file delete -force test.db 
+
 do_test key-database-by-name {
     sqlite_orig db test.db
     execsql {
