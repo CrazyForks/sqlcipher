@@ -2059,7 +2059,7 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
   }
 
   for(page = 1; page <= file_sz / ctx->page_sz; page++) {
-    i64 offset = (page - 1) * ctx->page_sz;
+    i64 offset = (page - 1) * (i64) ctx->page_sz;
     int payload_sz = ctx->page_sz - ctx->reserve_sz + ctx->iv_sz;
     int read_sz = ctx->page_sz;
 
@@ -2075,24 +2075,41 @@ static int sqlcipher_codec_ctx_integrity_check(codec_ctx *ctx, Parse *pParse, ch
 
     sqlcipher_memset(ctx->buffer, 0, ctx->page_sz);
     sqlcipher_memset(hmac_out, 0, ctx->hmac_sz);
+
     if(sqlite3OsRead(fd, ctx->buffer, read_sz, offset) != SQLITE_OK) {
-      result = sqlite3_mprintf("error reading %d bytes from file page %d at offset %d", read_sz, page, offset);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      result = sqlite3_mprintf("error reading %d bytes from file page %d at offset %lld", read_sz, page, offset);
+      if(result) {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      } else {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "error reading from file (OOM)" , P4_STATIC);
+      }
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     } else if(sqlcipher_page_hmac(ctx, ctx->read_ctx, page, ctx->buffer, payload_sz, hmac_out) != SQLITE_OK) {
       result = sqlite3_mprintf("HMAC operation failed for page %d", page);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      if(result) {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      } else {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "HMAC operation failed (OOM)" , P4_STATIC);
+      }
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     } else if(sqlcipher_memcmp(ctx->buffer + payload_sz, hmac_out, ctx->hmac_sz) != 0) {
       result = sqlite3_mprintf("HMAC verification failed for page %d", page);
-      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      if(result) {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+      } else {
+        sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "HMAC verification failed (OOM)" , P4_STATIC);
+      }
       sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
     }
   }
 
   if(file_sz % ctx->page_sz != 0) {
     result = sqlite3_mprintf("page %d has an invalid size of %lld bytes (expected %d bytes)", page, file_sz - ((file_sz / ctx->page_sz) * ctx->page_sz), ctx->page_sz);
-    sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+    if(result) {
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, result, P4_DYNAMIC);
+    } else {
+      sqlite3VdbeAddOp4(v, OP_String8, 0, 1, 0, "page has an invalid size (OOM)" , P4_STATIC);
+    }
     sqlite3VdbeAddOp2(v, OP_ResultRow, 1, 1);
   }
 
