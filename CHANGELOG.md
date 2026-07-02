@@ -1,9 +1,13 @@
 # SQLCipher Change Log
 Notable changes to this project are documented in this file.
 
-## [4.17.0] - (? 2026 - [4.17.0 changes])
-- Normalize error behavior for incorrect keys when first operation
-  attempts to modfiy the schema
+## [4.17.0] - (July 2026 - [4.17.0 changes])
+- Update baseline to SQLite 3.53.3
+- Normalize error behavior for incorrect keys when first operation attempts to modfiy the schema
+- Improve error detection, propagation, and fix fortuna reinitialization in LibTomCrypt provider
+- Improve thread safety for debug memory counters and xoshiro state
+- Add optional `SQLCIPHER_OMIT_MALLOC` macro to improve testability with Address Sanitizer
+- Numerous miscellaneous fixes and general improvements
 
 ## [4.16.0] - (May 2026 - [4.16.0 changes])
 - Update baseline to SQLite 3.53.1
